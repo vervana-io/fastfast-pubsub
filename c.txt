@@ -1,0 +1,7 @@
+3. Message Handler API
+4. Client Proxy
+5. Options & Configuration
+6. Events & Observability
+7. Documentation & Examples
+8. Testing
+9. Advanced Features (Optional)

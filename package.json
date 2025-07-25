@@ -1,0 +1,48 @@
+{
+  "name": "nestjs-aws-pubsub",
+  "version": "1.0.0",
+  "description": "NestJS microservice transport for AWS SQS and SNS with pub/sub patterns, featuring message acknowledgment, batch processing, retry logic, and SNS fan-out support.",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/nestjs-aws-pubsub.git"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
+  },
+  "keywords": [
+    "nestjs",
+    "aws",
+    "sqs",
+    "sns",
+    "pubsub",
+    "microservice",
+    "transport",
+    "messaging",
+    "queue",
+    "events"
+  ],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@nestjs/testing": "^11.1.5",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.1.0",
+    "aws-sdk": "^2.1692.0",
+    "jest": "^30.0.5",
+    "ts-jest": "^29.4.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "peerDependencies": {
+    "@aws-sdk/client-sqs": "^3.826.0",
+    "@nestjs/common": "^11.1.3",
+    "@nestjs/microservices": "^11.1.3",
+    "sqs-consumer": "^12.0.0",
+    "sqs-producer": "^7.0.0"
+  }
+}
