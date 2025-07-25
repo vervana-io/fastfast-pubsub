@@ -26,42 +26,71 @@ npm install nestjs-aws-pubsub
 
 ```typescript
 import { NestFactory } from '@nestjs/core';
-import { Transport } from '@nestjs/microservices';
 import { AppModule } from './app.module';
-import { PubSubClient, PubSubServer } from 'nestjs-aws-pubsub';
+import { PubSubServer } from 'nestjs-aws-pubsub';
 
 async function bootstrap() {
   const app = await NestFactory.createMicroservice(AppModule, {
-    transport: Transport.CUSTOM,
-    options: {
-      strategy: new PubSubServer({
+    strategy: new PubSubServer({
+        // Consumer configurations
         consumers: [
           {
             name: 'orders-queue',
             queueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789012/orders-queue',
             region: 'us-east-1',
           },
-        ],
-        producers: [
           {
             name: 'notifications-queue',
             queueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789012/notifications-queue',
             region: 'us-east-1',
           },
         ],
+        
+        // Producer configurations
+        producers: [
+          {
+            name: 'orders-producer',
+            queueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789012/orders-queue',
+            region: 'us-east-1',
+          },
+        ],
+        
+        // SNS configuration
         topics: [
           {
             name: 'orders',
             topicArn: 'arn:aws:sns:us-east-1:123456789012:orders-topic',
           },
+          {
+            name: 'notifications',
+            topicArn: 'arn:aws:sns:us-east-1:123456789012:notifications-topic',
+          },
         ],
         sns: {
           region: 'us-east-1',
         },
+        
+        // Serialization
         serializer: { serialize: (value: any) => value },
         deserializer: { deserialize: (value: any) => value },
+        
+        // Environment scoping (optional)
+        scopedEnvKey: 'PROD',
       }),
-    },
+  });
+
+  // Listen to internal events for observability
+  const pubSubServer = app.get(PubSubServer);
+  pubSubServer.on('message_received', (message) => {
+    console.log('Message received:', message.MessageId);
+  });
+
+  pubSubServer.on('message_processed', (message) => {
+    console.log('Message processed:', message.MessageId);
+  });
+
+  pubSubServer.on('processing_error', () => {
+    console.log('Error processing message');
   });
 
   await app.listen();
@@ -74,7 +103,7 @@ bootstrap();
 ```typescript
 import { Controller } from '@nestjs/common';
 import { MessagePattern, EventPattern } from '@nestjs/microservices';
-import { PubSubContext } from 'nestjs-aws-pubsub';
+import { PubSubContext, PubSubMessagePattern } from 'nestjs-aws-pubsub';
 
 @Controller()
 export class OrdersController {
@@ -94,8 +123,8 @@ export class OrdersController {
     await context.ack();
   }
 
-  @MessagePattern('batch_orders')
-  async handleBatchOrders(batch: Array<{ data: any; context: SQSContext }>) {
+  @PubSubMessagePattern('batch_orders', { batch: true })
+  async handleBatchOrders(batch: Array<{ data: any; context: PubSubContext }>) {
     console.log('Processing batch of orders:', batch.length);
     
     for (const { data, context } of batch) {
@@ -110,25 +139,25 @@ export class OrdersController {
 
 ```typescript
 import { Injectable } from '@nestjs/common';
-import { SQSClient } from 'nestjs-aws-pubsub';
+import { PubSubClient } from 'nestjs-aws-pubsub';
 
 @Injectable()
 export class OrdersService {
-  constructor(private readonly sqsClient: PubSubClient) {}
+  constructor(private readonly pubSubClient: PubSubClient) {}
 
   async createOrder(orderData: any) {
     // Send to SQS queue
-    await this.sqsClient.sendMessage('order_created', orderData, {
+    await this.pubSubClient.sendMessage('order_created', orderData, {
       queueName: 'orders-queue',
     });
 
     // Send to SNS topic (fan-out to multiple SQS queues)
-    await this.sqsClient.sendMessage('order_approved', orderData, {
+    await this.pubSubClient.sendMessage('order_approved', orderData, {
       topic: 'orders',
     });
 
     // Use emit for fire-and-forget
-    this.sqsClient.emit('order_notification', orderData, {
+    this.pubSubClient.emit('order_notification', orderData, {
       topic: 'notifications',
     });
   }
@@ -137,17 +166,17 @@ export class OrdersService {
 
 ## Configuration Options
 
-### SQS Server Options
+### PubSubOptions
 
 ```typescript
-interface SqsOptions {
+interface PubSubOptions {
   // Consumer configurations
-  consumer?: SqsConsumerOptions;
-  consumers?: SqsConsumerOptions[];
+  consumer?: PubSubConsumerOptions;
+  consumers?: PubSubConsumerOptions[];
   
   // Producer configurations
-  producer?: SqsProducerOptions;
-  producers?: SqsProducerOptions[];
+  producer?: PubSubProducerOptions;
+  producers?: PubSubProducerOptions[];
   
   // SNS configuration
   topics?: Array<{ name: string; topicArn: string }>;
@@ -171,13 +200,25 @@ interface SqsOptions {
 ### Consumer Options
 
 ```typescript
-interface SqsConsumerOptions {
+interface PubSubConsumerOptions {
   name: string;
   queueUrl: string;
   region?: string;
   credentials?: any;
   stopOptions?: StopOptions;
   // ... other sqs-consumer options
+}
+```
+
+### Producer Options
+
+```typescript
+interface PubSubProducerOptions {
+  name: string;
+  queueUrl: string;
+  region?: string;
+  credentials?: any;
+  // ... other sqs-producer options
 }
 ```
 
@@ -208,7 +249,7 @@ The library automatically handles SNS envelope unwrapping for messages sent via 
 ```typescript
 // Messages sent to SNS topics will be automatically unwrapped
 @MessagePattern('order_created')
-async handleOrderCreated(data: any, context: SQSContext) {
+async handleOrderCreated(data: any, context: PubSubContext) {
   // This will work for messages sent directly to SQS
   // AND for messages sent via SNS fan-out
   console.log('Processing order:', data);
@@ -224,7 +265,7 @@ Handle messages from non-NestJS services (e.g., Laravel):
 // Laravel sends: { "pattern": "order_created", "data": {...} }
 // NestJS automatically extracts pattern and data
 @MessagePattern('order_created')
-async handleOrderCreated(data: any, context: SQSContext) {
+async handleOrderCreated(data: any, context: PubSubContext) {
   // Works seamlessly with Laravel or any other service
   return true;
 }
@@ -234,25 +275,25 @@ async handleOrderCreated(data: any, context: SQSContext) {
 
 ```typescript
 // Listen to internal events
-sqsServer.on('message_received', (message) => {
+pubSubServer.on('message_received', (message) => {
   console.log('Message received:', message);
 });
 
-sqsServer.on('message_processed', (message) => {
+pubSubServer.on('message_processed', (message) => {
   console.log('Message processed:', message);
 });
 
-sqsServer.on('processing_error', () => {
+pubSubServer.on('processing_error', () => {
   console.log('Error processing message');
 });
 ```
 
 ## API Reference
 
-### SQSContext
+### PubSubContext
 
 ```typescript
-class SQSContext {
+class PubSubContext {
   getMessage(): any;           // Get raw SQS message
   getPattern(): string;        // Get message pattern
   ack(): Promise<void>;        // Manually acknowledge message
@@ -260,10 +301,10 @@ class SQSContext {
 }
 ```
 
-### SQSClient
+### PubSubClient
 
 ```typescript
-class SQSClient extends ClientProxy {
+class PubSubClient extends ClientProxy {
   // Send message to SQS or SNS
   sendMessage<T>(
     pattern: string,
@@ -285,6 +326,71 @@ class SQSClient extends ClientProxy {
 
   // Dispatch event
   dispatchEvent(packet: any): Promise<any>;
+}
+```
+
+### PubSubMessagePattern Decorator
+
+```typescript
+function PubSubMessagePattern(
+  pattern: string, 
+  options?: {
+    batch?: boolean;
+    retry?: number;
+  }
+)
+```
+
+## Usage from Another Service
+
+```typescript
+import { PubSubClient } from 'nestjs-aws-pubsub';
+
+async function sendMessageExample() {
+  const client = new PubSubClient({
+    producers: [
+      {
+        name: 'orders-producer',
+        queueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789012/orders-queue',
+        region: 'us-east-1',
+      },
+    ],
+    topics: [
+      {
+        name: 'orders',
+        topicArn: 'arn:aws:sns:us-east-1:123456789012:orders-topic',
+      },
+    ],
+    sns: {
+      region: 'us-east-1',
+    },
+    serializer: { serialize: (value: any) => value },
+    deserializer: { deserialize: (value: any) => value },
+  });
+
+  // Send to SQS
+  await client.sendMessage('order_created', { 
+    orderId: '123', 
+    customerId: '456',
+    amount: 99.99 
+  }, { 
+    queueName: 'orders-queue' 
+  });
+
+  // Send to SNS (fan-out)
+  await client.sendMessage('order_approved', { 
+    orderId: '123' 
+  }, { 
+    topic: 'orders' 
+  });
+
+  // Emit event
+  client.emit('order_notification', { 
+    orderId: '123',
+    status: 'approved' 
+  }, { 
+    topic: 'notifications' 
+  });
 }
 ```
 
