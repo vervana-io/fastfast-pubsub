@@ -4,15 +4,26 @@
   "description": "NestJS microservice transport for AWS SQS and SNS with pub/sub patterns, featuring message acknowledgment, batch processing, retry logic, and SNS fan-out support.",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
+  "files": [
+    "lib/**/*.js",
+    "lib/**/*.d.ts",
+    "lib/**/*.js.map"
+  ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/nestjs-aws-pubsub.git"
+    "url": "https://github.com/akeebismail/nestjs-aws-pubsub.git",
+    "urls": [
+      "https://github.com/akeebismail/nestjs-aws-pubsub.git",
+      "https://github.com/vervana-io/fastfast-pubsub.git"
+    ]
   },
   "scripts": {
     "build": "tsc",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "prepublishOnly": "npm run build",
+    "clean": "rm -rf lib/*.js lib/*.d.ts lib/*.js.map"
   },
   "keywords": [
     "nestjs",
@@ -26,7 +37,7 @@
     "queue",
     "events"
   ],
-  "author": "",
+  "author": "Akeeb Ismail",
   "license": "ISC",
   "devDependencies": {
     "@nestjs/testing": "^11.1.5",

@@ -9,7 +9,7 @@
     "experimentalDecorators": true,
     "target": "ES2021",
     "sourceMap": true,
-    "outDir": "./dist",
+    "outDir": "./lib",
     "rootDir": "./lib",
     "skipLibCheck": true,
     "strictNullChecks": false,
