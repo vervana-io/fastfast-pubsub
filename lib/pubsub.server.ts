@@ -60,6 +60,13 @@ export class PubSubServer extends Server<PubSubEvents>{
             const { body, messageAttributes } = message;
             let rawMessage;
             
+            // Defensive check for missing body
+            if (!body) {
+                this.logger.error(`Received message without a body: ${JSON.stringify(message)}`);
+                this.emit('error' as any, 'Received message without a body');
+                continue;
+            }
+            
             try {
                 rawMessage = JSON.parse(body.toString());
             } catch (error: any) {
@@ -223,6 +230,14 @@ export class PubSubServer extends Server<PubSubEvents>{
     async handleMessage(message: any) {
         const { body, messageAttributes } = message;
         let rawMessage;
+        
+        // Defensive check for missing body
+        if (!body) {
+            this.logger.error(`Received message without a body: ${JSON.stringify(message)}`);
+            this.emit('error' as any, 'Received message without a body');
+            return;
+        }
+        
         try {
             rawMessage = JSON.parse(body.toString());
         } catch (error: any) {

@@ -42,6 +42,11 @@ class PubSubServer extends microservices_1.Server {
         for (const message of messages) {
             const { body, messageAttributes } = message;
             let rawMessage;
+            if (!body) {
+                this.logger.error(`Received message without a body: ${JSON.stringify(message)}`);
+                this.emit('error', 'Received message without a body');
+                continue;
+            }
             try {
                 rawMessage = JSON.parse(body.toString());
             }
@@ -180,6 +185,11 @@ class PubSubServer extends microservices_1.Server {
     async handleMessage(message) {
         const { body, messageAttributes } = message;
         let rawMessage;
+        if (!body) {
+            this.logger.error(`Received message without a body: ${JSON.stringify(message)}`);
+            this.emit('error', 'Received message without a body');
+            return;
+        }
         try {
             rawMessage = JSON.parse(body.toString());
         }
