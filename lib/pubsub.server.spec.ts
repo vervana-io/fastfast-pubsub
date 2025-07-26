@@ -80,10 +80,11 @@ describe('PubSubServer deserialization and handler routing', () => {
       messageAttributes: {},
     };
     await server.handleMessage(message);
+    // With true batch processing, single messages are processed individually
+    // Batch handlers are only called when there are multiple messages
     expect(mockBatchHandler).toHaveBeenCalledWith(
-      expect.arrayContaining([
-        expect.objectContaining({ data: expect.objectContaining({ foo: 'bar', pattern: 'batch_pattern', id: 'batch1' }), context: expect.any(PubSubContext) })
-      ])
+      expect.objectContaining({ foo: 'bar', pattern: 'batch_pattern', id: 'batch1' }),
+      expect.any(PubSubContext)
     );
   });
 
@@ -107,5 +108,25 @@ describe('PubSubServer deserialization and handler routing', () => {
     };
     await server.handleMessage(message);
     expect(contextNack).toHaveBeenCalled();
+  });
+
+  it('should handle true batch processing with multiple messages', async () => {
+    const messages = [
+      {
+        body: JSON.stringify({ foo: 'bar1', pattern: 'batch_pattern', id: 'batch1' }),
+        messageAttributes: {},
+      },
+      {
+        body: JSON.stringify({ foo: 'bar2', pattern: 'batch_pattern', id: 'batch2' }),
+        messageAttributes: {},
+      },
+    ];
+    await server.handleMessageBatch(messages);
+    expect(mockBatchHandler).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ data: expect.objectContaining({ foo: 'bar1', pattern: 'batch_pattern', id: 'batch1' }), context: expect.any(PubSubContext) }),
+        expect.objectContaining({ data: expect.objectContaining({ foo: 'bar2', pattern: 'batch_pattern', id: 'batch2' }), context: expect.any(PubSubContext) })
+      ])
+    );
   });
 }); 

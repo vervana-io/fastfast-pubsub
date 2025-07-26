@@ -37,8 +37,93 @@ class PubSubServer extends microservices_1.Server {
     getHandlerOptions(handler) {
         return this.reflector.get(pubsub_decorator_1.PUBSUB_HANDLER_OPTIONS, handler) || {};
     }
+    async handleMessageBatch(messages) {
+        const batchGroups = new Map();
+        for (const message of messages) {
+            const { body, messageAttributes } = message;
+            let rawMessage;
+            try {
+                rawMessage = JSON.parse(body.toString());
+            }
+            catch (error) {
+                this.logger.error(`Unsupported JSON message data format for message '${message.MessageId || message.id}'`);
+                this.emit('error', error);
+                continue;
+            }
+            if (rawMessage.Type === 'Notification' && rawMessage.Message) {
+                try {
+                    rawMessage = JSON.parse(rawMessage.Message);
+                }
+                catch (error) {
+                    this.logger.error('Failed to parse SNS Message property as JSON');
+                    this.emit('error', error);
+                    continue;
+                }
+            }
+            let pattern;
+            if (messageAttributes && messageAttributes.pattern && messageAttributes.pattern.StringValue) {
+                pattern = messageAttributes.pattern.StringValue;
+            }
+            else if (rawMessage.pattern) {
+                pattern = rawMessage.pattern;
+            }
+            if (!pattern) {
+                this.logger.error('No pattern found in message attributes or body.');
+                this.emit('error', 'No pattern found in message attributes or body.');
+                continue;
+            }
+            const id = (messageAttributes && messageAttributes.id && messageAttributes.id.StringValue) || rawMessage.id;
+            const packet = this.deserializer.deserialize({
+                data: rawMessage,
+                pattern,
+                id,
+            });
+            const context = new pubsub_context_1.PubSubContext([message, pattern]);
+            if (!batchGroups.has(pattern)) {
+                batchGroups.set(pattern, []);
+            }
+            batchGroups.get(pattern).push({ data: packet.data, context });
+        }
+        for (const [pattern, batch] of batchGroups) {
+            const handler = this.getHandlerByPattern(pattern);
+            if (!handler) {
+                this.logger.error(`No handler found for pattern: ${pattern}`);
+                this.emit('processing_error');
+                this.emit('error', `No handler found for pattern: ${pattern}`);
+                continue;
+            }
+            const handlerOptions = this.reflector.get(pubsub_decorator_1.PUBSUB_HANDLER_OPTIONS, handler) || {};
+            if (handlerOptions.batch) {
+                try {
+                    await handler(batch);
+                    this.emit('batch_processed', batch);
+                }
+                catch (err) {
+                    this.emit('processing_error');
+                    this.emit('error', err);
+                }
+            }
+            else {
+                for (const { data, context } of batch) {
+                    try {
+                        const handlerResult = await handler(data, context);
+                        if (handlerResult === true)
+                            await context.ack();
+                        else if (handlerResult === false)
+                            await context.nack();
+                        this.emit('message_processed', context.getMessage());
+                    }
+                    catch (err) {
+                        this.emit('processing_error');
+                        this.emit('error', err);
+                    }
+                }
+            }
+        }
+    }
     async listen(callback) {
-        for (const options of this.options.consumers) {
+        const consumersToProcess = this.options.consumers || (this.options.consumer ? [this.options.consumer] : []);
+        for (const options of consumersToProcess) {
             const prefix = this.options.scopedEnvKey ? `${this.options.scopedEnvKey}_` : '';
             const name = `${prefix}${options.name}`;
             const { name: _origName, ...option } = options;
@@ -46,6 +131,22 @@ class PubSubServer extends microservices_1.Server {
                 try {
                     const consumer = sqs_consumer_1.Consumer.create({
                         ...option,
+                        handleMessage: async (message) => {
+                            try {
+                                await this.handleMessage(message);
+                            }
+                            catch (error) {
+                                this.logger.error('Error handling message:', error);
+                            }
+                        },
+                        handleMessageBatch: async (messages) => {
+                            try {
+                                await this.handleMessageBatch(messages);
+                            }
+                            catch (error) {
+                                this.logger.error('Error handling message batch:', error);
+                            }
+                        },
                     });
                     const pending = this.pendingEventListeners.filter((f) => f.name === name);
                     for (const emitter of pending) {
@@ -54,14 +155,7 @@ class PubSubServer extends microservices_1.Server {
                         }
                     }
                     this.pendingEventListeners = this.pendingEventListeners.filter((f) => f.name !== name);
-                    consumer.on('message_received', async (message, metadata) => {
-                        try {
-                            await this.handleMessage(message);
-                        }
-                        catch (error) {
-                            this.logger.error('Error handling message:', error);
-                        }
-                    }).on('error', (err) => {
+                    consumer.on('error', (err) => {
                         this.logger.error(err);
                     });
                     consumer.start();
@@ -137,31 +231,17 @@ class PubSubServer extends microservices_1.Server {
             return this.sendMessage(noHandlerPacket, messageAttributes?.id?.StringValue, correlationId);
         }
         this.emit('message_received', message);
-        const handlerOptions = this.reflector.get(pubsub_decorator_1.PUBSUB_HANDLER_OPTIONS, handler) || {};
-        if (handlerOptions.batch) {
-            const batch = [{ data: packet.data, context }];
-            try {
-                await handler(batch);
-                this.emit('batch_processed', batch);
-            }
-            catch (err) {
-                this.emit('processing_error');
-                this.emit('error', err);
-            }
+        try {
+            const handlerResult = await handler(packet.data, context);
+            if (handlerResult === true)
+                await context.ack();
+            else if (handlerResult === false)
+                await context.nack();
+            this.emit('message_processed', message);
         }
-        else {
-            try {
-                const handlerResult = await handler(packet.data, context);
-                if (handlerResult === true)
-                    await context.ack();
-                else if (handlerResult === false)
-                    await context.nack();
-                this.emit('message_processed', message);
-            }
-            catch (err) {
-                this.emit('processing_error');
-                this.emit('error', err);
-            }
+        catch (err) {
+            this.emit('processing_error');
+            this.emit('error', err);
         }
         const response$ = this.transformToObservable(undefined);
         const publish = (data) => this.sendMessage(data, messageAttributes?.id?.StringValue, correlationId);

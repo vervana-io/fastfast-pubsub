@@ -51,8 +51,108 @@ export class PubSubServer extends Server<PubSubEvents>{
         return this.reflector.get(PUBSUB_HANDLER_OPTIONS, handler) || {};
     }
 
+    // New method for true batch processing
+    async handleMessageBatch(messages: any[]) {
+        const batchGroups = new Map<string, Array<{ data: any; context: PubSubContext }>>();
+        
+        // Group messages by pattern
+        for (const message of messages) {
+            const { body, messageAttributes } = message;
+            let rawMessage;
+            
+            try {
+                rawMessage = JSON.parse(body.toString());
+            } catch (error: any) {
+                this.logger.error(
+                    `Unsupported JSON message data format for message '${message.MessageId || message.id}'`,
+                );
+                this.emit('error' as any, error);
+                continue;
+            }
+
+            // SNS-to-SQS fan-out support: unwrap SNS envelope if present
+            if (rawMessage.Type === 'Notification' && rawMessage.Message) {
+                try {
+                    rawMessage = JSON.parse(rawMessage.Message);
+                } catch (error: any) {
+                    this.logger.error('Failed to parse SNS Message property as JSON');
+                    this.emit('error' as any, error);
+                    continue;
+                }
+            }
+
+            // Extract pattern
+            let pattern: string | undefined;
+            if (messageAttributes && messageAttributes.pattern && messageAttributes.pattern.StringValue) {
+                pattern = messageAttributes.pattern.StringValue;
+            } else if (rawMessage.pattern) {
+                pattern = rawMessage.pattern;
+            }
+
+            if (!pattern) {
+                this.logger.error('No pattern found in message attributes or body.');
+                this.emit('error' as any, 'No pattern found in message attributes or body.');
+                continue;
+            }
+
+            // Create context and packet
+            const id = (messageAttributes && messageAttributes.id && messageAttributes.id.StringValue) || rawMessage.id;
+            const packet = this.deserializer.deserialize({
+                data: rawMessage,
+                pattern,
+                id,
+            }) as IncomingRequest;
+            const context = new PubSubContext([message, pattern]);
+
+            // Group by pattern
+            if (!batchGroups.has(pattern)) {
+                batchGroups.set(pattern, []);
+            }
+            batchGroups.get(pattern)!.push({ data: packet.data, context });
+        }
+
+        // Process each batch group
+        for (const [pattern, batch] of batchGroups) {
+            const handler = this.getHandlerByPattern(pattern);
+            if (!handler) {
+                this.logger.error(`No handler found for pattern: ${pattern}`);
+                this.emit('processing_error' as any);
+                this.emit('error' as any, `No handler found for pattern: ${pattern}`);
+                continue;
+            }
+
+            // Check if handler supports batch processing
+            const handlerOptions = this.reflector.get(PUBSUB_HANDLER_OPTIONS, handler) || {};
+            if (handlerOptions.batch) {
+                try {
+                    await handler(batch);
+                    this.emit('batch_processed' as any, batch);
+                } catch (err) {
+                    this.emit('processing_error' as any);
+                    this.emit('error' as any, err);
+                }
+            } else {
+                // Process each message individually if handler doesn't support batch
+                for (const { data, context } of batch) {
+                    try {
+                        const handlerResult = await handler(data, context);
+                        if (handlerResult === true) await context.ack();
+                        else if (handlerResult === false) await context.nack();
+                        this.emit('message_processed' as any, context.getMessage());
+                    } catch (err) {
+                        this.emit('processing_error' as any);
+                        this.emit('error' as any, err);
+                    }
+                }
+            }
+        }
+    }
+
     async listen(callback: () => void): Promise<any> {
-        for (const options of this.options.consumers) {
+        // Handle both single consumer and multiple consumers
+        const consumersToProcess = this.options.consumers || (this.options.consumer ? [this.options.consumer] : []);
+        
+        for (const options of consumersToProcess) {
             // Add support for scopedEnvKey to prefix queue names
             const prefix = this.options.scopedEnvKey ? `${this.options.scopedEnvKey}_` : '';
             const name = `${prefix}${options.name}`;
@@ -63,6 +163,20 @@ export class PubSubServer extends Server<PubSubEvents>{
                     const consumer = Consumer.create({
                         ...option,
                         // queueUrl: name, // Uncomment and use if your PubSubConsumerOptions expects queueUrl
+                        handleMessage: async (message) => {
+                            try {
+                                await this.handleMessage(message);
+                            } catch (error) {
+                                this.logger.error('Error handling message:', error);
+                            }
+                        },
+                        handleMessageBatch: async (messages) => {
+                            try {
+                                await this.handleMessageBatch(messages);
+                            } catch (error) {
+                                this.logger.error('Error handling message batch:', error);
+                            }
+                        },
                     });
                     // Attach any pending event listeners for this consumer
                     const pending = this.pendingEventListeners.filter((f) => f.name === name);
@@ -74,14 +188,7 @@ export class PubSubServer extends Server<PubSubEvents>{
                     // Remove attached listeners from pendingEventListeners
                     this.pendingEventListeners = this.pendingEventListeners.filter((f) => f.name !== name);
 
-                    consumer.on('message_received', async (message, metadata) => {
-                        try {
-                            // Pass the raw SQS message to the context for ack/nack support
-                            await this.handleMessage(message);
-                        } catch (error) {
-                            this.logger.error('Error handling message:', error);
-                        }
-                    }).on('error', (err) => {
+                    consumer.on('error', (err) => {
                         this.logger.error(err);
                     });
 
@@ -180,27 +287,15 @@ export class PubSubServer extends Server<PubSubEvents>{
         // Emit message_received event
         this.emit('message_received' as any, message);
 
-        // Restore handler options logic for batch/custom decorators
-        const handlerOptions = this.reflector.get(PUBSUB_HANDLER_OPTIONS, handler) || {};
-        if (handlerOptions.batch) {
-            const batch = [{ data: packet.data, context }];
-            try {
-                await handler(batch);
-                this.emit('batch_processed' as any, batch);
-            } catch (err) {
-                this.emit('processing_error' as any);
-                this.emit('error' as any, err);
-            }
-        } else {
-            try {
-                const handlerResult = await handler(packet.data, context);
-                if (handlerResult === true) await context.ack();
-                else if (handlerResult === false) await context.nack();
-                this.emit('message_processed' as any, message);
-            } catch (err) {
-                this.emit('processing_error' as any);
-                this.emit('error' as any, err);
-            }
+        // Process single message (batch processing is handled by handleMessageBatch)
+        try {
+            const handlerResult = await handler(packet.data, context);
+            if (handlerResult === true) await context.ack();
+            else if (handlerResult === false) await context.nack();
+            this.emit('message_processed' as any, message);
+        } catch (err) {
+            this.emit('processing_error' as any);
+            this.emit('error' as any, err);
         }
 
         const response$ = this.transformToObservable(undefined); // No response for batch by default

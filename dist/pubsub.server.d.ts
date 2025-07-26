@@ -21,6 +21,7 @@ export declare class PubSubServer extends Server<PubSubEvents> {
     private eventEmitter;
     constructor(options: PubSubOptions);
     private getHandlerOptions;
+    handleMessageBatch(messages: any[]): Promise<void>;
     listen(callback: () => void): Promise<any>;
     close(): Promise<void>;
     emit<EventKey extends keyof PubSubEvents>(event: EventKey, ...args: Parameters<PubSubEvents[EventKey]>): void;
