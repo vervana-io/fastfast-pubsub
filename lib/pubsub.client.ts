@@ -4,8 +4,7 @@ import {Logger} from "@nestjs/common";
 import {QueueName, PubSubConsumerMapValues, PubSubOptions} from "./pubsub.interface";
 import {type SendMessageBatchResultEntry} from "@aws-sdk/client-sqs";
 import {Message, Producer} from "sqs-producer";
-import {isString} from "@nestjs/common/utils/shared.utils";
-import { SNS } from 'aws-sdk';
+import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
 import { Observable, from } from 'rxjs';
 
 export class PubSubClient extends ClientProxy<PubSubEvents>{
@@ -17,7 +16,7 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
     private replyQueueName?: string;
     public readonly consumers = new Map<QueueName, PubSubConsumerMapValues>();
     public readonly producers = new Map<QueueName, Producer>();
-    private snsClient?: SNS;
+    private snsClient?: SNSClient;
 
     constructor(protected options : PubSubOptions) {
         super();
@@ -25,7 +24,7 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
         this.initializeSerializer(options);
         this.initializeDeserializer(options);
         if (options.sns) {
-            this.snsClient = new SNS(options.sns);
+            this.snsClient = new SNSClient(options.sns);
         }
     }
 
@@ -108,7 +107,7 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
         retries: number = this.maxRetries
     ): Promise<void> {
         try {
-            await this.snsClient!.publish({
+            const command = new PublishCommand({
                 TopicArn: topicArn,
                 Message: JSON.stringify({ ...data, pattern }),
                 MessageAttributes: {
@@ -117,7 +116,8 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
                         StringValue: pattern,
                     },
                 },
-            }).promise();
+            });
+            await this.snsClient!.send(command);
         } catch (error: any) {
             if (retries <= 0) {
                 this.logger.log(

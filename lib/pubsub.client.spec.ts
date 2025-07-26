@@ -1,15 +1,15 @@
 import { PubSubClient } from './pubsub.client';
 import { PubSubOptions } from './pubsub.interface';
-import { SNS } from 'aws-sdk';
+import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
 import { Producer } from 'sqs-producer';
 
 jest.mock('sqs-producer');
-jest.mock('aws-sdk', () => {
-  const SNS = jest.fn().mockImplementation(() => ({
-    publish: jest.fn().mockReturnThis(),
-    promise: jest.fn(),
+jest.mock('@aws-sdk/client-sns', () => {
+  const SNSClient = jest.fn().mockImplementation(() => ({
+    send: jest.fn().mockResolvedValue('sns-sent'),
   }));
-  return { SNS };
+  const PublishCommand = jest.fn().mockImplementation((params) => params);
+  return { SNSClient, PublishCommand };
 });
 
 describe('PubSubClient', () => {
@@ -23,8 +23,8 @@ describe('PubSubClient', () => {
     callCount = 0;
     mockProducerSend = jest.fn().mockResolvedValue('sent');
     (Producer.create as jest.Mock).mockReturnValue({ send: mockProducerSend });
-    mockSNSPublish = jest.fn().mockReturnValue({ promise: jest.fn().mockResolvedValue('sns-sent') });
-    (SNS as any).mockImplementation(() => ({ publish: mockSNSPublish }));
+    mockSNSPublish = jest.fn().mockResolvedValue('sns-sent');
+    (SNSClient as any).mockImplementation(() => ({ send: mockSNSPublish }));
 
     options = {
       producers: [{ name: 'orders', queueUrl: 'dummy-url' }],
@@ -73,16 +73,14 @@ describe('PubSubClient', () => {
   it('should retry SNS publish on failure and succeed', async () => {
     const error = new Error('SNS fail');
     let callCount = 0;
-    const mockPublish = jest.fn().mockImplementation(() => ({
-      promise: () => {
-        callCount++;
-        if (callCount === 1) {
-          return Promise.reject(error);
-        }
-        return Promise.resolve('sns-sent');
+    const mockSend = jest.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.reject(error);
       }
-    }));
-    client['snsClient'] = { publish: mockPublish } as any;
+      return Promise.resolve('sns-sent');
+    });
+    client['snsClient'] = { send: mockSend } as any;
     
     await expect(
       client.sendMessage('order_created', { orderId: 123 }, { topic: 'orders' })
@@ -126,13 +124,11 @@ describe('PubSubClient', () => {
   it('should throw error if SNS publish fails after retries', async () => {
     const error = new Error('SNS fail');
     let callCount = 0;
-    const mockPublish = jest.fn().mockImplementation(() => ({
-      promise: () => {
-        callCount++;
-        return Promise.reject(error);
-      }
-    }));
-    client['snsClient'] = { publish: mockPublish } as any;
+    const mockSend = jest.fn().mockImplementation(() => {
+      callCount++;
+      return Promise.reject(error);
+    });
+    client['snsClient'] = { send: mockSend } as any;
     
     await expect(
       client.sendMessage('order_created', { orderId: 123 }, { topic: 'orders' })
