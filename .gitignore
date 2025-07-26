@@ -5,8 +5,6 @@ yarn-debug.log*
 yarn-error.log*
 
 # Build outputs
-lib/*.js
-lib/*.d.ts
 dist/
 build/
 
