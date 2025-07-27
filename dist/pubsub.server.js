@@ -40,7 +40,8 @@ class PubSubServer extends microservices_1.Server {
     async handleMessageBatch(messages) {
         const batchGroups = new Map();
         for (const message of messages) {
-            const { body, messageAttributes } = message;
+            const body = message.body || message.Body;
+            const messageAttributes = message.messageAttributes || message.MessageAttributes;
             let rawMessage;
             if (!body) {
                 this.logger.error(`Received message without a body: ${JSON.stringify(message)}`);
@@ -183,7 +184,8 @@ class PubSubServer extends microservices_1.Server {
         this.eventEmitter.on(event, listener);
     }
     async handleMessage(message) {
-        const { body, messageAttributes } = message;
+        const body = message.body || message.Body;
+        const messageAttributes = message.messageAttributes || message.MessageAttributes;
         let rawMessage;
         if (!body) {
             this.logger.error(`Received message without a body: ${JSON.stringify(message)}`);

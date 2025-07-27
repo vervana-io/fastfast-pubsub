@@ -57,7 +57,9 @@ export class PubSubServer extends Server<PubSubEvents>{
         
         // Group messages by pattern
         for (const message of messages) {
-            const { body, messageAttributes } = message;
+            // Handle both 'body' and 'Body' property names
+            const body = message.body || message.Body;
+            const messageAttributes = message.messageAttributes || message.MessageAttributes;
             let rawMessage;
             
             // Defensive check for missing body
@@ -228,7 +230,9 @@ export class PubSubServer extends Server<PubSubEvents>{
     }
 
     async handleMessage(message: any) {
-        const { body, messageAttributes } = message;
+        // Handle both 'body' and 'Body' property names
+        const body = message.body || message.Body;
+        const messageAttributes = message.messageAttributes || message.MessageAttributes;
         let rawMessage;
         
         // Defensive check for missing body

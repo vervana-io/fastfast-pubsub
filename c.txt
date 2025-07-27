@@ -5,3 +5,28 @@
 7. Documentation & Examples
 8. Testing
 9. Advanced Features (Optional)
+
+
+{
+  "Type": "Notification",
+  "MessageId": "some-uuid",
+  "TopicArn": "arn:aws:sns:...",
+  "Message": "{\"orderId\":123,\"pattern\":\"order_approved\"}", // <-- your original message as a string!
+  "Timestamp": "...",
+  // ...other SNS metadata...
+}
+
+$result = $client->sendMessage([
+    'QueueUrl' => 'https://sqs.us-east-1.amazonaws.com/123456789012/orders',
+    'MessageBody' => json_encode([
+        'orderId' => 123,
+        // ...other data...
+    ]),
+    'MessageAttributes' => [
+        'pattern' => [
+            'DataType' => 'String',
+            'StringValue' => 'order_approved',
+        ],
+        // Optionally, add 'id' or other attributes if your NestJS expects them
+    ],
+]);
