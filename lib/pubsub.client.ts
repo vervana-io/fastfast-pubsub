@@ -12,10 +12,10 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
     protected readonly logger =  new Logger(PubSubClient.name)
     private readonly maxRetries = 3; // Number of retry attempts for sending messages
     private readonly retryDelay = 1000; // Delay between retry attempts in milliseconds
-    private client: Producer;
+    private client: Producer | SNSClient;
     private replyQueueName?: string;
     public readonly consumers = new Map<QueueName, PubSubConsumerMapValues>();
-    public readonly producers = new Map<QueueName, Producer>();
+    public readonly producers = new Map<QueueName, Producer | SNSClient>();
     private snsClient?: SNSClient;
 
     constructor(protected options : PubSubOptions) {
@@ -23,9 +23,9 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
 
         this.initializeSerializer(options);
         this.initializeDeserializer(options);
-        if (options.sns) {
+        /*if (options.producers) {
             this.snsClient = new SNSClient(options.sns);
-        }
+        }*/
     }
 
     async connect(): Promise<void> {
@@ -38,9 +38,16 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
         }]
 
         producerOptions.forEach(options => {
-            const {name, ...option} = options;
+
+            const {name, type } = options;
+            let producer;
             if (!this.producers.has(name)) {
-                const producer = Producer.create(option)
+                if (options.type === 'sns') {
+                    this.snsClient = new SNSClient(options.sns)
+                    producer = this.snsClient;
+                } else {
+                    producer = Producer.create(options.sqs)
+                }
                 this.producers.set(name, producer)
             }
         })
@@ -273,6 +280,9 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
 
         try {
             const producer = this.producers.get(qlName)
+            if (producer instanceof SNSClient) {
+                return await producer.send()
+            }
             return await producer.send(message);
         } catch (error: any) {
             if (retries <= 0) {

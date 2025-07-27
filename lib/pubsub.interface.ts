@@ -3,6 +3,7 @@ import type { LoggerService, ModuleMetadata, Type } from '@nestjs/common';
 import type { Consumer, ConsumerOptions, StopOptions } from 'sqs-consumer';
 import type { Producer } from 'sqs-producer';
 import {Deserializer, Serializer} from "@nestjs/microservices";
+import {SNSClientConfig} from "@aws-sdk/client-sns";
 
 export type ProducerOptions = Parameters<typeof Producer.create>[0];
 export type QueueName = string;
@@ -17,9 +18,27 @@ export type PubSubConsumerMapValues = {
     stopOptions: StopOptions;
 };
 
-export type PubSubProducerOptions = ProducerOptions & {
+export interface PubSubProducerBase {
     name: QueueName;
-};
+    type: string;
+}
+export interface PubSubSQSProducerOption extends PubSubProducerBase {
+    type: 'sqs';
+    sqs: ProducerOptions
+}
+
+export interface PubSubSNSProducerOption extends PubSubProducerBase {
+    type: 'sns';
+    sns: SNSClientConfig;
+    topicArn: string;
+    topicName?: string;
+}
+/*export type PubSubProducerOptions = ProducerOptions & {
+    name: QueueName;
+    type: string;
+};*/
+
+export type PubSubProducerOptions = PubSubSQSProducerOption | PubSubSNSProducerOption;
 
 export interface PubSubOptions {
     consumer?: PubSubConsumerOptions;
@@ -32,7 +51,6 @@ export interface PubSubOptions {
     deserializer: Deserializer
     scopedEnvKey?: string;
     topics?: Array<{ name: string; topicArn: string }>;
-    sns?: any; // SNS.ClientConfiguration, but use any for compatibility
 }
 
 export interface PubSubModuleOptionsFactory {
