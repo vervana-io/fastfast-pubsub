@@ -167,7 +167,9 @@ class PubSubClient extends microservices_1.ClientProxy {
         }
     }
     createSqsMessage(serializedPacket, packet) {
-        return {
+        this.logger.log(`Creating SQS message with packet: ${JSON.stringify(packet)}`);
+        this.logger.log(`Serialized packet: ${JSON.stringify(serializedPacket)}`);
+        const message = {
             body: JSON.stringify(serializedPacket.data),
             messageAttributes: {
                 pattern: {
@@ -181,6 +183,8 @@ class PubSubClient extends microservices_1.ClientProxy {
             },
             id: packet.id,
         };
+        this.logger.log(`Created SQS message: ${JSON.stringify(message)}`);
+        return message;
     }
     generateMessageId() {
         return Math.random().toString(36).substring(2) + Date.now();

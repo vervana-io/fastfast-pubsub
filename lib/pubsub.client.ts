@@ -244,7 +244,11 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
      * @returns The formatted SQS message.
      */
     private createSqsMessage(serializedPacket: any, packet: any): Message {
-        return {
+        // Debug logging to see what's being created
+        this.logger.log(`Creating SQS message with packet: ${JSON.stringify(packet)}`);
+        this.logger.log(`Serialized packet: ${JSON.stringify(serializedPacket)}`);
+        
+        const message = {
             body: JSON.stringify(serializedPacket.data),
             messageAttributes: {
                 pattern: {
@@ -258,6 +262,9 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
             },
             id: packet.id,
         };
+        
+        this.logger.log(`Created SQS message: ${JSON.stringify(message)}`);
+        return message;
     }
 
     // Utility to generate a unique message ID (simple example)
