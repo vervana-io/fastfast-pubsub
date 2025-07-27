@@ -22,20 +22,22 @@ class PubSubClient extends microservices_1.ClientProxy {
         }
     }
     async connect() {
-        if (!this.options.producer || !this.options.producers) {
+        if (!this.options.producer && !this.options.producers) {
             throw new Error('Producer options are not defined');
         }
-        const producerOptions = this.options.producers ?? [{
-                ...this.options.producer,
-                name: 'default'
-            }];
+        const producerOptions = this.options.producers ?? (this.options.producer ? [this.options.producer] : []);
+        this.logger.log(`Initializing ${producerOptions.length} producer(s)`);
         producerOptions.forEach(options => {
             const { name, ...option } = options;
+            this.logger.log(`Creating producer: ${name}`);
             if (!this.producers.has(name)) {
                 const producer = sqs_producer_1.Producer.create(option);
                 this.producers.set(name, producer);
+                this.logger.log(`Producer '${name}' created successfully`);
             }
         });
+        const producerNames = Array.from(this.producers.keys());
+        this.logger.log(`Available producers: ${producerNames.join(', ')}`);
         if (this.replyQueueName) {
         }
     }
@@ -139,6 +141,7 @@ class PubSubClient extends microservices_1.ClientProxy {
     async sendMessage(pattern, data, options) {
         if (options?.queueName || options?.type === 'sqs') {
             const qName = options?.queueName || 'default';
+            this.logger.log(`Sending message to SQS queue: ${qName}, pattern: ${pattern}`);
             const packet = {
                 pattern,
                 data,
@@ -185,6 +188,11 @@ class PubSubClient extends microservices_1.ClientProxy {
     async sendMessageWithRetry(qlName = 'default', message, retries) {
         try {
             const producer = this.producers.get(qlName);
+            if (!producer) {
+                const availableProducers = Array.from(this.producers.keys());
+                this.logger.error(`Producer '${qlName}' not found. Available producers: ${availableProducers.join(', ')}`);
+                throw new Error(`Producer '${qlName}' not found. Available producers: ${availableProducers.join(', ')}`);
+            }
             return await producer.send(message);
         }
         catch (error) {

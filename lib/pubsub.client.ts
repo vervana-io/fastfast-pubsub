@@ -29,21 +29,26 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
     }
 
     async connect(): Promise<void> {
-        if (!this.options.producer || !this.options.producers) {
+        if (!this.options.producer && !this.options.producers) {
             throw new Error('Producer options are not defined');
         }
-        const producerOptions = this.options.producers ?? [{
-            ...this.options.producer,
-            name: 'default'
-        }]
-
+        
+        const producerOptions = this.options.producers ?? (this.options.producer ? [this.options.producer] : []);
+        
+        this.logger.log(`Initializing ${producerOptions.length} producer(s)`);
+        
         producerOptions.forEach(options => {
             const {name, ...option} = options;
+            this.logger.log(`Creating producer: ${name}`);
             if (!this.producers.has(name)) {
-                const producer = Producer.create(option)
-                this.producers.set(name, producer)
+                const producer = Producer.create(option);
+                this.producers.set(name, producer);
+                this.logger.log(`Producer '${name}' created successfully`);
             }
-        })
+        });
+        
+        const producerNames = Array.from(this.producers.keys());
+        this.logger.log(`Available producers: ${producerNames.join(', ')}`);
 
         if (this.replyQueueName) {
 
@@ -202,6 +207,8 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
         // Prefer SQS if queueName is provided or type is 'sqs'
         if (options?.queueName || options?.type === 'sqs') {
             const qName = options?.queueName || 'default';
+            this.logger.log(`Sending message to SQS queue: ${qName}, pattern: ${pattern}`);
+            
             const packet = {
                 pattern,
                 data,
@@ -272,7 +279,15 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
     ): Promise<SendMessageBatchResultEntry[]> {
 
         try {
-            const producer = this.producers.get(qlName)
+            const producer = this.producers.get(qlName);
+            
+            // Debug logging to help identify the issue
+            if (!producer) {
+                const availableProducers = Array.from(this.producers.keys());
+                this.logger.error(`Producer '${qlName}' not found. Available producers: ${availableProducers.join(', ')}`);
+                throw new Error(`Producer '${qlName}' not found. Available producers: ${availableProducers.join(', ')}`);
+            }
+            
             return await producer.send(message);
         } catch (error: any) {
             if (retries <= 0) {
