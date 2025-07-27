@@ -40,6 +40,11 @@ class PubSubServer extends microservices_1.Server {
     async handleMessageBatch(messages) {
         const batchGroups = new Map();
         for (const message of messages) {
+            this.logger.log(`Processing message: ${JSON.stringify({
+                id: message.id || message.Id || message.MessageId,
+                body: message.body || message.Body,
+                messageAttributes: message.messageAttributes || message.MessageAttributes,
+            }, null, 2)}`);
             const body = message.body || message.Body;
             const messageAttributes = message.messageAttributes || message.MessageAttributes;
             let rawMessage;
@@ -69,12 +74,16 @@ class PubSubServer extends microservices_1.Server {
             let pattern;
             if (messageAttributes && messageAttributes.pattern && messageAttributes.pattern.StringValue) {
                 pattern = messageAttributes.pattern.StringValue;
+                this.logger.log(`Found pattern in messageAttributes: ${pattern}`);
             }
             else if (rawMessage.pattern) {
                 pattern = rawMessage.pattern;
+                this.logger.log(`Found pattern in rawMessage: ${pattern}`);
             }
             if (!pattern) {
                 this.logger.error('No pattern found in message attributes or body.');
+                this.logger.error(`messageAttributes: ${JSON.stringify(messageAttributes)}`);
+                this.logger.error(`rawMessage: ${JSON.stringify(rawMessage)}`);
                 this.emit('error', 'No pattern found in message attributes or body.');
                 continue;
             }
