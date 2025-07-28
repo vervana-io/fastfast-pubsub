@@ -1,6 +1,6 @@
 {
   "name": "fastfast-pubsub",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "NestJS microservice transport for AWS SQS and SNS with pub/sub patterns, featuring message acknowledgment, batch processing, retry logic, and SNS fan-out support.",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
