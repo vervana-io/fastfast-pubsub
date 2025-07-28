@@ -149,6 +149,7 @@ class PubSubServer extends microservices_1.Server {
                 try {
                     const consumer = sqs_consumer_1.Consumer.create({
                         ...option,
+                        messageAttributeNames: ['All'],
                         handleMessage: async (message) => {
                             try {
                                 await this.handleMessage(message);

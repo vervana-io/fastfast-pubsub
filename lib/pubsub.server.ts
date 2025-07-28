@@ -184,8 +184,10 @@ export class PubSubServer extends Server<PubSubEvents>{
             if (!this.consumers.has(name)) {
                 try {
                     // Remove queueName property, use correct SQS property (e.g., queueUrl)
+
                     const consumer = Consumer.create({
                         ...option,
+                        messageAttributeNames: ['All'], // Request all message attributes from SQS
                         // queueUrl: name, // Uncomment and use if your PubSubConsumerOptions expects queueUrl
                         handleMessage: async (message) => {
                             try {
