@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PubSubClient = void 0;
 const microservices_1 = require("@nestjs/microservices");
 const common_1 = require("@nestjs/common");
-const sqs_producer_1 = require("sqs-producer");
+const client_sqs_1 = require("@aws-sdk/client-sqs");
 const client_sns_1 = require("@aws-sdk/client-sns");
 const rxjs_1 = require("rxjs");
 class PubSubClient extends microservices_1.ClientProxy {
@@ -31,7 +31,7 @@ class PubSubClient extends microservices_1.ClientProxy {
             const { name, ...option } = options;
             this.logger.log(`Creating producer: ${name}`);
             if (!this.producers.has(name)) {
-                const producer = sqs_producer_1.Producer.create(option);
+                const producer = new client_sqs_1.SQSClient(option);
                 this.producers.set(name, producer);
                 this.logger.log(`Producer '${name}' created successfully`);
             }
@@ -198,9 +198,17 @@ class PubSubClient extends microservices_1.ClientProxy {
                 throw new Error(`Producer '${qlName}' not found. Available producers: ${availableProducers.join(', ')}`);
             }
             this.logger.log(`Producer sending message: ${JSON.stringify(message)}`);
-            const result = await producer.send(message);
+            const command = new client_sqs_1.SendMessageCommand({
+                QueueUrl: this.getQueueUrl(qlName),
+                MessageBody: message.body,
+                MessageAttributes: message.messageAttributes,
+                MessageGroupId: message.groupId,
+                MessageDeduplicationId: message.deduplicationId,
+                DelaySeconds: message.delaySeconds,
+            });
+            const result = await producer.send(command);
             this.logger.log(`Producer send result: ${JSON.stringify(result)}`);
-            return result;
+            return [result];
         }
         catch (error) {
             if (retries <= 0) {
@@ -210,6 +218,14 @@ class PubSubClient extends microservices_1.ClientProxy {
             this.logMessage(`Error sending message to SQS, retrying (${this.maxRetries - retries + 1}/${this.maxRetries}): ${error.message}`, 'error');
             return this.sendMessageWithRetry(qlName, message, retries - 1);
         }
+    }
+    getQueueUrl(queueName) {
+        const producerOptions = this.options.producers ?? (this.options.producer ? [this.options.producer] : []);
+        const producerConfig = producerOptions.find(p => p.name === queueName);
+        if (!producerConfig) {
+            throw new Error(`Producer configuration not found for queue: ${queueName}`);
+        }
+        return producerConfig.queueUrl;
     }
     logMessage(message, level = 'log') {
         switch (level) {

@@ -3,7 +3,8 @@ import {PubSubEvents} from "./pubsub.events";
 import {Logger} from "@nestjs/common";
 import {QueueName, PubSubConsumerMapValues, PubSubOptions} from "./pubsub.interface";
 import {type SendMessageBatchResultEntry} from "@aws-sdk/client-sqs";
-import {Message, Producer} from "sqs-producer";
+import {Message} from "sqs-producer";
+import { SQSClient, SendMessageCommand, SendMessageBatchCommand } from '@aws-sdk/client-sqs';
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
 import { Observable, from } from 'rxjs';
 
@@ -12,10 +13,10 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
     protected readonly logger =  new Logger(PubSubClient.name)
     private readonly maxRetries = 3; // Number of retry attempts for sending messages
     private readonly retryDelay = 1000; // Delay between retry attempts in milliseconds
-    private client: Producer;
+    private client: any; // Keep for compatibility
     private replyQueueName?: string;
     public readonly consumers = new Map<QueueName, PubSubConsumerMapValues>();
-    public readonly producers = new Map<QueueName, Producer>();
+    public readonly producers = new Map<QueueName, SQSClient>();
     private snsClient?: SNSClient;
 
     constructor(protected options : PubSubOptions) {
@@ -41,7 +42,7 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
             const {name, ...option} = options;
             this.logger.log(`Creating producer: ${name}`);
             if (!this.producers.has(name)) {
-                const producer = Producer.create(option);
+                const producer = new SQSClient(option);
                 this.producers.set(name, producer);
                 this.logger.log(`Producer '${name}' created successfully`);
             }
@@ -283,7 +284,7 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
         qlName: QueueName = 'default',
         message: Message,
         retries: number,
-    ): Promise<SendMessageBatchResultEntry[]> {
+    ): Promise<any> {
 
         try {
             const producer = this.producers.get(qlName);
@@ -297,9 +298,20 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
             
             // Debug logging to see what the producer is actually sending
             this.logger.log(`Producer sending message: ${JSON.stringify(message)}`);
-            const result = await producer.send(message);
+            
+            // Use AWS SDK directly instead of sqs-producer
+            const command = new SendMessageCommand({
+                QueueUrl: this.getQueueUrl(qlName),
+                MessageBody: message.body,
+                MessageAttributes: message.messageAttributes,
+                MessageGroupId: message.groupId,
+                MessageDeduplicationId: message.deduplicationId,
+                DelaySeconds: message.delaySeconds,
+            });
+            
+            const result = await producer.send(command);
             this.logger.log(`Producer send result: ${JSON.stringify(result)}`);
-            return result;
+            return [result]; // Return as array to match expected type
         } catch (error: any) {
             if (retries <= 0) {
                 this.logger.log(
@@ -323,6 +335,16 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
      * @param message - The message to log.
      * @param level - The log level ('log' or 'error').
      */
+    private getQueueUrl(queueName: QueueName): string {
+        // Find the producer configuration for this queue name
+        const producerOptions = this.options.producers ?? (this.options.producer ? [this.options.producer] : []);
+        const producerConfig = producerOptions.find(p => p.name === queueName);
+        if (!producerConfig) {
+            throw new Error(`Producer configuration not found for queue: ${queueName}`);
+        }
+        return producerConfig.queueUrl;
+    }
+    
     private logMessage(message: string, level: 'log' | 'error' = 'log'): void {
         switch (level) {
             case 'error':

@@ -2,7 +2,8 @@ import { ClientProxy, ReadPacket, WritePacket } from "@nestjs/microservices";
 import { PubSubEvents } from "./pubsub.events";
 import { Logger } from "@nestjs/common";
 import { PubSubConsumerMapValues, PubSubOptions } from "./pubsub.interface";
-import { Message, Producer } from "sqs-producer";
+import { Message } from "sqs-producer";
+import { SQSClient } from '@aws-sdk/client-sqs';
 import { Observable } from 'rxjs';
 export declare class PubSubClient extends ClientProxy<PubSubEvents> {
     protected options: PubSubOptions;
@@ -12,7 +13,7 @@ export declare class PubSubClient extends ClientProxy<PubSubEvents> {
     private client;
     private replyQueueName?;
     readonly consumers: Map<string, PubSubConsumerMapValues>;
-    readonly producers: Map<string, Producer>;
+    readonly producers: Map<string, SQSClient>;
     private snsClient?;
     constructor(options: PubSubOptions);
     connect(): Promise<void>;
@@ -43,5 +44,6 @@ export declare class PubSubClient extends ClientProxy<PubSubEvents> {
     private createSqsMessage;
     private generateMessageId;
     private sendMessageWithRetry;
+    private getQueueUrl;
     private logMessage;
 }
