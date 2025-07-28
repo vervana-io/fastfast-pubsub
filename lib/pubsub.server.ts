@@ -62,6 +62,10 @@ export class PubSubServer extends Server<PubSubEvents>{
                 id: message.id || message.Id || message.MessageId,
                 body: message.body || message.Body,
                 messageAttributes: message.messageAttributes || message.MessageAttributes,
+                // Add more detailed logging for messageAttributes
+                hasMessageAttributes: !!(message.messageAttributes || message.MessageAttributes),
+                messageAttributesKeys: message.messageAttributes ? Object.keys(message.messageAttributes) : 
+                                    message.MessageAttributes ? Object.keys(message.MessageAttributes) : [],
             }, null, 2)}`);
             
             // Handle both 'body' and 'Body' property names

@@ -44,6 +44,9 @@ class PubSubServer extends microservices_1.Server {
                 id: message.id || message.Id || message.MessageId,
                 body: message.body || message.Body,
                 messageAttributes: message.messageAttributes || message.MessageAttributes,
+                hasMessageAttributes: !!(message.messageAttributes || message.MessageAttributes),
+                messageAttributesKeys: message.messageAttributes ? Object.keys(message.messageAttributes) :
+                    message.MessageAttributes ? Object.keys(message.MessageAttributes) : [],
             }, null, 2)}`);
             const body = message.body || message.Body;
             const messageAttributes = message.messageAttributes || message.MessageAttributes;

@@ -295,7 +295,11 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
                 throw new Error(`Producer '${qlName}' not found. Available producers: ${availableProducers.join(', ')}`);
             }
             
-            return await producer.send(message);
+            // Debug logging to see what the producer is actually sending
+            this.logger.log(`Producer sending message: ${JSON.stringify(message)}`);
+            const result = await producer.send(message);
+            this.logger.log(`Producer send result: ${JSON.stringify(result)}`);
+            return result;
         } catch (error: any) {
             if (retries <= 0) {
                 this.logger.log(

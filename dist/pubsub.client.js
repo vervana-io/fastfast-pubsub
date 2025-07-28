@@ -197,7 +197,10 @@ class PubSubClient extends microservices_1.ClientProxy {
                 this.logger.error(`Producer '${qlName}' not found. Available producers: ${availableProducers.join(', ')}`);
                 throw new Error(`Producer '${qlName}' not found. Available producers: ${availableProducers.join(', ')}`);
             }
-            return await producer.send(message);
+            this.logger.log(`Producer sending message: ${JSON.stringify(message)}`);
+            const result = await producer.send(message);
+            this.logger.log(`Producer send result: ${JSON.stringify(result)}`);
+            return result;
         }
         catch (error) {
             if (retries <= 0) {
