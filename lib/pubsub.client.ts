@@ -13,10 +13,10 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
     protected readonly logger =  new Logger(PubSubClient.name)
     private readonly maxRetries = 3; // Number of retry attempts for sending messages
     private readonly retryDelay = 1000; // Delay between retry attempts in milliseconds
-    private client: Producer | SNSClient;
+    private client: any;
     private replyQueueName?: string;
     public readonly consumers = new Map<QueueName, PubSubConsumerMapValues>();
-    public readonly producers = new Map<QueueName, Producer | SNSClient>();
+    public readonly producers = new Map<QueueName, SQSClient | SNSClient>();
     private snsClient?: SNSClient;
 
     constructor(protected options : PubSubOptions) {
