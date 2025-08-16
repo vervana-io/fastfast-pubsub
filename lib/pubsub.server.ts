@@ -57,6 +57,17 @@ export class PubSubServer extends Server<PubSubEvents>{
         
         // Group messages by pattern
         for (const message of messages) {
+            // Debug logging to see what messages are being received
+            this.logger.log(`Processing message: ${JSON.stringify({
+                id: message.id || message.Id || message.MessageId,
+                body: message.body || message.Body,
+                messageAttributes: message.messageAttributes || message.MessageAttributes,
+                // Add more detailed logging for messageAttributes
+                hasMessageAttributes: !!(message.messageAttributes || message.MessageAttributes),
+                messageAttributesKeys: message.messageAttributes ? Object.keys(message.messageAttributes) : 
+                                    message.MessageAttributes ? Object.keys(message.MessageAttributes) : [],
+            }, null, 2)}`);
+            
             // Handle both 'body' and 'Body' property names
             const body = message.body || message.Body;
             const messageAttributes = message.messageAttributes || message.MessageAttributes;
@@ -94,12 +105,16 @@ export class PubSubServer extends Server<PubSubEvents>{
             let pattern: string | undefined;
             if (messageAttributes && messageAttributes.pattern && messageAttributes.pattern.StringValue) {
                 pattern = messageAttributes.pattern.StringValue;
+                this.logger.log(`Found pattern in messageAttributes: ${pattern}`);
             } else if (rawMessage.pattern) {
                 pattern = rawMessage.pattern;
+                this.logger.log(`Found pattern in rawMessage: ${pattern}`);
             }
 
             if (!pattern) {
                 this.logger.error('No pattern found in message attributes or body.');
+                this.logger.error(`messageAttributes: ${JSON.stringify(messageAttributes)}`);
+                this.logger.error(`rawMessage: ${JSON.stringify(rawMessage)}`);
                 this.emit('error' as any, 'No pattern found in message attributes or body.');
                 continue;
             }
@@ -169,8 +184,10 @@ export class PubSubServer extends Server<PubSubEvents>{
             if (!this.consumers.has(name)) {
                 try {
                     // Remove queueName property, use correct SQS property (e.g., queueUrl)
+
                     const consumer = Consumer.create({
                         ...option,
+                        messageAttributeNames: ['All'], // Request all message attributes from SQS
                         // queueUrl: name, // Uncomment and use if your PubSubConsumerOptions expects queueUrl
                         handleMessage: async (message) => {
                             try {

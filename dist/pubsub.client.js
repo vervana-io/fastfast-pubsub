@@ -3,7 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.PubSubClient = void 0;
 const microservices_1 = require("@nestjs/microservices");
 const common_1 = require("@nestjs/common");
-const sqs_producer_1 = require("sqs-producer");
+const client_sqs_1 = require("@aws-sdk/client-sqs");
 const client_sns_1 = require("@aws-sdk/client-sns");
 const rxjs_1 = require("rxjs");
 class PubSubClient extends microservices_1.ClientProxy {
@@ -22,20 +22,22 @@ class PubSubClient extends microservices_1.ClientProxy {
         }
     }
     async connect() {
-        if (!this.options.producer || !this.options.producers) {
+        if (!this.options.producer && !this.options.producers) {
             throw new Error('Producer options are not defined');
         }
-        const producerOptions = this.options.producers ?? [{
-                ...this.options.producer,
-                name: 'default'
-            }];
+        const producerOptions = this.options.producers ?? (this.options.producer ? [this.options.producer] : []);
+        this.logger.log(`Initializing ${producerOptions.length} producer(s)`);
         producerOptions.forEach(options => {
             const { name, ...option } = options;
+            this.logger.log(`Creating producer: ${name}`);
             if (!this.producers.has(name)) {
-                const producer = sqs_producer_1.Producer.create(option);
+                const producer = new client_sqs_1.SQSClient(option);
                 this.producers.set(name, producer);
+                this.logger.log(`Producer '${name}' created successfully`);
             }
         });
+        const producerNames = Array.from(this.producers.keys());
+        this.logger.log(`Available producers: ${producerNames.join(', ')}`);
         if (this.replyQueueName) {
         }
     }
@@ -139,6 +141,7 @@ class PubSubClient extends microservices_1.ClientProxy {
     async sendMessage(pattern, data, options) {
         if (options?.queueName || options?.type === 'sqs') {
             const qName = options?.queueName || 'default';
+            this.logger.log(`Sending message to SQS queue: ${qName}, pattern: ${pattern}`);
             const packet = {
                 pattern,
                 data,
@@ -164,7 +167,9 @@ class PubSubClient extends microservices_1.ClientProxy {
         }
     }
     createSqsMessage(serializedPacket, packet) {
-        return {
+        this.logger.log(`Creating SQS message with packet: ${JSON.stringify(packet)}`);
+        this.logger.log(`Serialized packet: ${JSON.stringify(serializedPacket)}`);
+        const message = {
             body: JSON.stringify(serializedPacket.data),
             messageAttributes: {
                 pattern: {
@@ -178,6 +183,8 @@ class PubSubClient extends microservices_1.ClientProxy {
             },
             id: packet.id,
         };
+        this.logger.log(`Created SQS message: ${JSON.stringify(message)}`);
+        return message;
     }
     generateMessageId() {
         return Math.random().toString(36).substring(2) + Date.now();
@@ -185,7 +192,23 @@ class PubSubClient extends microservices_1.ClientProxy {
     async sendMessageWithRetry(qlName = 'default', message, retries) {
         try {
             const producer = this.producers.get(qlName);
-            return await producer.send(message);
+            if (!producer) {
+                const availableProducers = Array.from(this.producers.keys());
+                this.logger.error(`Producer '${qlName}' not found. Available producers: ${availableProducers.join(', ')}`);
+                throw new Error(`Producer '${qlName}' not found. Available producers: ${availableProducers.join(', ')}`);
+            }
+            this.logger.log(`Producer sending message: ${JSON.stringify(message)}`);
+            const command = new client_sqs_1.SendMessageCommand({
+                QueueUrl: this.getQueueUrl(qlName),
+                MessageBody: message.body,
+                MessageAttributes: message.messageAttributes,
+                MessageGroupId: message.groupId,
+                MessageDeduplicationId: message.deduplicationId,
+                DelaySeconds: message.delaySeconds,
+            });
+            const result = await producer.send(command);
+            this.logger.log(`Producer send result: ${JSON.stringify(result)}`);
+            return [result];
         }
         catch (error) {
             if (retries <= 0) {
@@ -195,6 +218,14 @@ class PubSubClient extends microservices_1.ClientProxy {
             this.logMessage(`Error sending message to SQS, retrying (${this.maxRetries - retries + 1}/${this.maxRetries}): ${error.message}`, 'error');
             return this.sendMessageWithRetry(qlName, message, retries - 1);
         }
+    }
+    getQueueUrl(queueName) {
+        const producerOptions = this.options.producers ?? (this.options.producer ? [this.options.producer] : []);
+        const producerConfig = producerOptions.find(p => p.name === queueName);
+        if (!producerConfig) {
+            throw new Error(`Producer configuration not found for queue: ${queueName}`);
+        }
+        return producerConfig.queueUrl;
     }
     logMessage(message, level = 'log') {
         switch (level) {

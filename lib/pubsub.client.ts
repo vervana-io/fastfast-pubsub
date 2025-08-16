@@ -3,7 +3,8 @@ import {PubSubEvents} from "./pubsub.events";
 import {Logger} from "@nestjs/common";
 import {QueueName, PubSubConsumerMapValues, PubSubOptions} from "./pubsub.interface";
 import {type SendMessageBatchResultEntry} from "@aws-sdk/client-sqs";
-import {Message, Producer} from "sqs-producer";
+import {Message} from "sqs-producer";
+import { SQSClient, SendMessageCommand, SendMessageBatchCommand } from '@aws-sdk/client-sqs';
 import { SNSClient, PublishCommand } from '@aws-sdk/client-sns';
 import { Observable, from } from 'rxjs';
 
@@ -29,28 +30,26 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
     }
 
     async connect(): Promise<void> {
-        if (!this.options.producer || !this.options.producers) {
+        if (!this.options.producer && !this.options.producers) {
             throw new Error('Producer options are not defined');
         }
-        const producerOptions = this.options.producers ?? [{
-            ...this.options.producer,
-            name: 'default'
-        }]
+
+        const producerOptions = this.options.producers ?? (this.options.producer ? [this.options.producer] : []);
+
+        this.logger.log(`Initializing ${producerOptions.length} producer(s)`);
 
         producerOptions.forEach(options => {
-
-            const {name, type } = options;
-            let producer;
+            const {name, ...option} = options;
+            this.logger.log(`Creating producer: ${name}`);
             if (!this.producers.has(name)) {
-                if (options.type === 'sns') {
-                    this.snsClient = new SNSClient(options.sns)
-                    producer = this.snsClient;
-                } else {
-                    producer = Producer.create(options.sqs)
-                }
-                this.producers.set(name, producer)
+                const producer = new SQSClient(option);
+                this.producers.set(name, producer);
+                this.logger.log(`Producer '${name}' created successfully`);
             }
-        })
+        });
+
+        const producerNames = Array.from(this.producers.keys());
+        this.logger.log(`Available producers: ${producerNames.join(', ')}`);
 
         if (this.replyQueueName) {
 
@@ -209,6 +208,8 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
         // Prefer SQS if queueName is provided or type is 'sqs'
         if (options?.queueName || options?.type === 'sqs') {
             const qName = options?.queueName || 'default';
+            this.logger.log(`Sending message to SQS queue: ${qName}, pattern: ${pattern}`);
+
             const packet = {
                 pattern,
                 data,
@@ -244,7 +245,11 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
      * @returns The formatted SQS message.
      */
     private createSqsMessage(serializedPacket: any, packet: any): Message {
-        return {
+        // Debug logging to see what's being created
+        this.logger.log(`Creating SQS message with packet: ${JSON.stringify(packet)}`);
+        this.logger.log(`Serialized packet: ${JSON.stringify(serializedPacket)}`);
+
+        const message = {
             body: JSON.stringify(serializedPacket.data),
             messageAttributes: {
                 pattern: {
@@ -258,6 +263,9 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
             },
             id: packet.id,
         };
+
+        this.logger.log(`Created SQS message: ${JSON.stringify(message)}`);
+        return message;
     }
 
     // Utility to generate a unique message ID (simple example)
@@ -276,14 +284,34 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
         qlName: QueueName = 'default',
         message: Message,
         retries: number,
-    ): Promise<SendMessageBatchResultEntry[]> {
+    ): Promise<any> {
 
         try {
-            const producer = this.producers.get(qlName)
-            if (producer instanceof SNSClient) {
-                return await producer.send()
+            const producer = this.producers.get(qlName);
+
+            // Debug logging to help identify the issue
+            if (!producer) {
+                const availableProducers = Array.from(this.producers.keys());
+                this.logger.error(`Producer '${qlName}' not found. Available producers: ${availableProducers.join(', ')}`);
+                throw new Error(`Producer '${qlName}' not found. Available producers: ${availableProducers.join(', ')}`);
             }
-            return await producer.send(message);
+
+            // Debug logging to see what the producer is actually sending
+            this.logger.log(`Producer sending message: ${JSON.stringify(message)}`);
+
+            // Use AWS SDK directly instead of sqs-producer
+            const command = new SendMessageCommand({
+                QueueUrl: this.getQueueUrl(qlName),
+                MessageBody: message.body,
+                MessageAttributes: message.messageAttributes,
+                MessageGroupId: message.groupId,
+                MessageDeduplicationId: message.deduplicationId,
+                DelaySeconds: message.delaySeconds,
+            });
+
+            const result = await producer.send(command);
+            this.logger.log(`Producer send result: ${JSON.stringify(result)}`);
+            return [result]; // Return as array to match expected type
         } catch (error: any) {
             if (retries <= 0) {
                 this.logger.log(
@@ -307,6 +335,16 @@ export class PubSubClient extends ClientProxy<PubSubEvents>{
      * @param message - The message to log.
      * @param level - The log level ('log' or 'error').
      */
+    private getQueueUrl(queueName: QueueName): string {
+        // Find the producer configuration for this queue name
+        const producerOptions = this.options.producers ?? (this.options.producer ? [this.options.producer] : []);
+        const producerConfig = producerOptions.find(p => p.name === queueName);
+        if (!producerConfig) {
+            throw new Error(`Producer configuration not found for queue: ${queueName}`);
+        }
+        return producerConfig.queueUrl;
+    }
+
     private logMessage(message: string, level: 'log' | 'error' = 'log'): void {
         switch (level) {
             case 'error':
