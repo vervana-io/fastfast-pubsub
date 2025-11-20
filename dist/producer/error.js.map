@@ -1,0 +1,1 @@
+{"version":3,"file":"error.js","sourceRoot":"","sources":["../../lib/producer/error.ts"],"names":[],"mappings":";;;AAGA,MAAa,wBAAyB,SAAQ,KAAK;IAM/C,YAAY,cAAwB;QAChC,KAAK,CAAC,4BAA4B,cAAc,CAAC,IAAI,CAAC,IAAI,CAAC,EAAE,CAAC,CAAC;QAC/D,IAAI,CAAC,cAAc,GAAG,cAAc,CAAC;IACzC,CAAC;CACJ;AAVD,4DAUC"}

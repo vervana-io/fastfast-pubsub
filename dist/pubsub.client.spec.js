@@ -1,116 +1,300 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+const producer_1 = require("./producer/producer");
+jest.mock('./producer/producer');
+const MockedProducer = producer_1.Producer;
+jest.mock('@nestjs/common', () => ({
+    Logger: jest.fn().mockImplementation(() => ({
+        log: jest.fn(),
+        error: jest.fn(),
+    })),
+}));
+jest.mock('@nestjs/microservices', () => ({
+    ClientProxy: class MockClientProxy {
+        constructor() {
+            this.serializer = { serialize: jest.fn() };
+            this.deserializer = { deserialize: jest.fn() };
+        }
+        initializeSerializer() { }
+        initializeDeserializer() { }
+    }
+}));
+const mockSerializer = {
+    serialize: jest.fn().mockImplementation((packet) => ({
+        data: packet.data,
+        pattern: packet.pattern,
+        id: packet.id,
+    })),
+};
+const mockDeserializer = {
+    deserialize: jest.fn().mockImplementation((data) => data),
+};
 const pubsub_client_1 = require("./pubsub.client");
-const client_sns_1 = require("@aws-sdk/client-sns");
-const sqs_producer_1 = require("sqs-producer");
-jest.mock('sqs-producer');
-jest.mock('@aws-sdk/client-sns', () => {
-    const SNSClient = jest.fn().mockImplementation(() => ({
-        send: jest.fn().mockResolvedValue('sns-sent'),
-    }));
-    const PublishCommand = jest.fn().mockImplementation((params) => params);
-    return { SNSClient, PublishCommand };
-});
 describe('PubSubClient', () => {
     let client;
-    let mockProducerSend;
-    let mockSNSPublish;
+    let mockProducer;
     let options;
-    let callCount;
+    let producerOptions;
     beforeEach(() => {
-        callCount = 0;
-        mockProducerSend = jest.fn().mockResolvedValue('sent');
-        sqs_producer_1.Producer.create.mockReturnValue({ send: mockProducerSend });
-        mockSNSPublish = jest.fn().mockResolvedValue('sns-sent');
-        client_sns_1.SNSClient.mockImplementation(() => ({ send: mockSNSPublish }));
+        jest.clearAllMocks();
+        mockProducer = {
+            send: jest.fn().mockResolvedValue('message-sent'),
+        };
+        MockedProducer.mockImplementation(() => mockProducer);
+        producerOptions = [
+            {
+                name: 'orders',
+                type: 'sqs',
+                queueUrl: 'https://sqs.us-east-1.amazonaws.com/123456789012/orders-queue',
+            },
+            {
+                name: 'notifications',
+                type: 'sns',
+                topicArn: 'arn:aws:sns:us-east-1:123456789012:notifications-topic',
+            },
+        ];
         options = {
-            producers: [{ name: 'orders', queueUrl: 'dummy-url' }],
-            topics: [
-                { name: 'orders', topicArn: 'arn:aws:sns:us-east-1:000000000000:orders' },
-                { name: 'notifications', topicArn: 'arn:aws:sns:us-east-1:000000000000:notifications' },
-            ],
-            sns: {},
-            serializer: { serialize: (v) => v },
-            deserializer: { deserialize: (v) => v },
-            logger: console,
+            producer: {
+                config: {
+                    accessKey: 'test-access-key',
+                    secretKey: 'test-secret-key',
+                    region: 'us-east-1',
+                },
+                producers: producerOptions,
+            },
+            serializer: mockSerializer,
+            deserializer: mockDeserializer,
         };
         client = new pubsub_client_1.PubSubClient(options);
-        client['producers'].set('orders', { send: mockProducerSend });
+        client['serializer'] = mockSerializer;
+        client['deserializer'] = mockDeserializer;
     });
     afterEach(() => {
         jest.clearAllMocks();
     });
-    it('should send to SQS if queueName is provided', async () => {
-        await client.sendMessage('order_created', { orderId: 123 }, { queueName: 'orders' });
-        expect(mockProducerSend).toHaveBeenCalled();
-        expect(mockSNSPublish).not.toHaveBeenCalled();
-    });
-    it('should send to SNS if topic is provided', async () => {
-        await client.sendMessage('order_created', { orderId: 123 }, { topic: 'orders' });
-        expect(mockSNSPublish).toHaveBeenCalled();
-        expect(mockProducerSend).not.toHaveBeenCalled();
-    });
-    it('should send to SNS if topicArn is provided', async () => {
-        await client.sendMessage('order_created', { orderId: 123 }, { topicArn: 'arn:aws:sns:us-east-1:000000000000:orders' });
-        expect(mockSNSPublish).toHaveBeenCalled();
-        expect(mockProducerSend).not.toHaveBeenCalled();
-    });
-    it('should send to SNS using default topic if no destination is provided', async () => {
-        await client.sendMessage('order_created', { orderId: 123 });
-        expect(mockSNSPublish).toHaveBeenCalled();
-        expect(mockProducerSend).not.toHaveBeenCalled();
-    });
-    it('should retry SNS publish on failure and succeed', async () => {
-        const error = new Error('SNS fail');
-        let callCount = 0;
-        const mockSend = jest.fn().mockImplementation(() => {
-            callCount++;
-            if (callCount === 1) {
-                return Promise.reject(error);
-            }
-            return Promise.resolve('sns-sent');
+    describe('Constructor', () => {
+        it('should create a PubSubClient instance with options', () => {
+            expect(client).toBeInstanceOf(pubsub_client_1.PubSubClient);
+            expect(client['options']).toBe(options);
         });
-        client['snsClient'] = { send: mockSend };
-        await expect(client.sendMessage('order_created', { orderId: 123 }, { topic: 'orders' })).resolves.toBeUndefined();
-        expect(callCount).toBe(2);
-    });
-    it('should retry SQS send on failure', async () => {
-        mockProducerSend
-            .mockRejectedValueOnce(new Error('fail1'))
-            .mockResolvedValueOnce('sent');
-        await client.sendMessage('order_created', { orderId: 123 }, { queueName: 'orders' });
-        expect(mockProducerSend).toHaveBeenCalledTimes(2);
-    });
-    it('should use emit for SNS', async () => {
-        await client.emit('order_created', { orderId: 123 }, { topic: 'orders' }).toPromise();
-        expect(mockSNSPublish).toHaveBeenCalled();
-    });
-    it('should use emit for SQS', async () => {
-        await client.emit('order_created', { orderId: 123 }, { queueName: 'orders' }).toPromise();
-        expect(mockProducerSend).toHaveBeenCalled();
-    });
-    it('should use dispatchEvent for SNS', async () => {
-        await client.dispatchEvent({ pattern: 'order_created', data: { orderId: 123 }, options: { topic: 'orders' } });
-        expect(mockSNSPublish).toHaveBeenCalled();
-    });
-    it('should use dispatchEvent for SQS', async () => {
-        await client.dispatchEvent({ pattern: 'order_created', data: { orderId: 123 }, options: { queueName: 'orders' } });
-        expect(mockProducerSend).toHaveBeenCalled();
-    });
-    it('should fallback to SNS if no queueName and no topic is provided', async () => {
-        await client.sendMessage('order_created', { orderId: 123 });
-        expect(mockSNSPublish).toHaveBeenCalled();
-    });
-    it('should throw error if SNS publish fails after retries', async () => {
-        const error = new Error('SNS fail');
-        let callCount = 0;
-        const mockSend = jest.fn().mockImplementation(() => {
-            callCount++;
-            return Promise.reject(error);
+        it('should initialize producers map as empty', () => {
+            expect(client.producers.size).toBe(0);
         });
-        client['snsClient'] = { send: mockSend };
-        await expect(client.sendMessage('order_created', { orderId: 123 }, { topic: 'orders' })).rejects.toThrow('SNS fail');
-        expect(callCount).toBe(client['maxRetries'] + 1);
+    });
+    describe('connect()', () => {
+        it('should initialize producers successfully', async () => {
+            await client.connect();
+            expect(MockedProducer).toHaveBeenCalledTimes(2);
+            expect(client.producers.size).toBe(2);
+            expect(client.producers.has('orders')).toBe(true);
+            expect(client.producers.has('notifications')).toBe(true);
+        });
+        it('should not create duplicate producers if already exist', async () => {
+            await client.connect();
+            expect(MockedProducer).toHaveBeenCalledTimes(2);
+            jest.clearAllMocks();
+            await client.connect();
+            expect(MockedProducer).not.toHaveBeenCalled();
+        });
+        it('should throw error if producer options are not defined', async () => {
+            const clientWithoutProducer = new pubsub_client_1.PubSubClient({
+                ...options,
+                producer: undefined,
+            });
+            await expect(clientWithoutProducer.connect()).rejects.toThrow('Producer options are not defined');
+        });
+    });
+    describe('sendMessage()', () => {
+        beforeEach(async () => {
+            await client.connect();
+        });
+        it('should send message to SQS producer successfully', async () => {
+            const pattern = 'order_created';
+            const data = { orderId: 123, userId: 'user-456' };
+            const options = { name: 'orders' };
+            await client.sendMessage(pattern, data, options);
+            expect(mockProducer.send).toHaveBeenCalledWith(expect.objectContaining({
+                body: JSON.stringify(data),
+                messageAttributes: {
+                    pattern: {
+                        DataType: 'String',
+                        StringValue: pattern,
+                    },
+                    id: {
+                        DataType: 'String',
+                        StringValue: expect.any(String),
+                    },
+                },
+                id: expect.any(String),
+            }), 3);
+        });
+        it('should send message to SNS producer successfully', async () => {
+            const pattern = 'notification_sent';
+            const data = { message: 'Hello World', userId: 'user-789' };
+            const options = { name: 'notifications' };
+            await client.sendMessage(pattern, data, options);
+            expect(mockProducer.send).toHaveBeenCalledWith(expect.objectContaining({
+                body: JSON.stringify(data),
+                messageAttributes: {
+                    pattern: {
+                        DataType: 'String',
+                        StringValue: pattern,
+                    },
+                    id: {
+                        DataType: 'String',
+                        StringValue: expect.any(String),
+                    },
+                },
+                id: expect.any(String),
+            }), 3);
+        });
+        it('should throw error if producer not found', async () => {
+            const pattern = 'test_event';
+            const data = { test: 'data' };
+            const options = { name: 'nonexistent' };
+            await expect(client.sendMessage(pattern, data, options)).rejects.toThrow("Producer 'nonexistent' not found");
+        });
+        it('should generate unique message ID for each message', async () => {
+            const pattern = 'test_event';
+            const data = { test: 'data' };
+            const options = { name: 'orders' };
+            await client.sendMessage(pattern, data, options);
+            await client.sendMessage(pattern, data, options);
+            const calls = mockProducer.send.mock.calls;
+            const firstId = calls[0][0].id;
+            const secondId = calls[1][0].id;
+            expect(firstId).not.toBe(secondId);
+            expect(typeof firstId).toBe('string');
+            expect(typeof secondId).toBe('string');
+        });
+    });
+    describe('emit()', () => {
+        beforeEach(async () => {
+            await client.connect();
+        });
+        it('should emit message using publishUnified', async () => {
+            const pattern = 'order_created';
+            const data = { orderId: 123 };
+            const options = { name: 'orders' };
+            const result = client.emit(pattern, data, options);
+            expect(result).toBeDefined();
+            await result.toPromise();
+            expect(mockProducer.send).toHaveBeenCalled();
+        });
+    });
+    describe('dispatchEvent()', () => {
+        beforeEach(async () => {
+            await client.connect();
+        });
+        it('should dispatch event using publishUnified', async () => {
+            const packet = {
+                pattern: 'order_created',
+                data: { orderId: 123 },
+                options: { name: 'orders' },
+            };
+            await client.dispatchEvent(packet);
+            expect(mockProducer.send).toHaveBeenCalledWith(expect.objectContaining({
+                body: JSON.stringify(packet.data),
+                messageAttributes: {
+                    pattern: {
+                        DataType: 'String',
+                        StringValue: packet.pattern,
+                    },
+                    id: {
+                        DataType: 'String',
+                        StringValue: expect.any(String),
+                    },
+                },
+                id: expect.any(String),
+            }), 3);
+        });
+    });
+    describe('close()', () => {
+        it('should clear producers map', async () => {
+            await client.connect();
+            expect(client.producers.size).toBe(2);
+            await client.close();
+            expect(client.producers.size).toBe(0);
+        });
+        it('should be callable multiple times safely', async () => {
+            await client.connect();
+            await client.close();
+            await client.close();
+            expect(client.producers.size).toBe(0);
+        });
+    });
+    describe('Error Handling', () => {
+        beforeEach(async () => {
+            await client.connect();
+        });
+        it('should handle producer send errors', async () => {
+            const error = new Error('Producer send failed');
+            mockProducer.send.mockRejectedValueOnce(error);
+            const pattern = 'test_event';
+            const data = { test: 'data' };
+            const options = { name: 'orders' };
+            await expect(client.sendMessage(pattern, data, options)).rejects.toThrow('Producer send failed');
+        });
+        it('should handle missing producer gracefully', async () => {
+            const pattern = 'test_event';
+            const data = { test: 'data' };
+            const options = { name: 'nonexistent' };
+            await expect(client.sendMessage(pattern, data, options)).rejects.toThrow("Producer 'nonexistent' not found");
+        });
+    });
+    describe('Message Creation', () => {
+        it('should create messages with correct structure', async () => {
+            await client.connect();
+            const pattern = 'test_event';
+            const data = { test: 'data' };
+            const options = { name: 'orders' };
+            await client.sendMessage(pattern, data, options);
+            expect(mockProducer.send).toHaveBeenCalledWith(expect.objectContaining({
+                body: JSON.stringify(data),
+                messageAttributes: {
+                    pattern: {
+                        DataType: 'String',
+                        StringValue: pattern,
+                    },
+                    id: {
+                        DataType: 'String',
+                        StringValue: expect.any(String),
+                    },
+                },
+                id: expect.any(String),
+            }), 3);
+        });
+        it('should generate unique IDs for different messages', async () => {
+            await client.connect();
+            const pattern = 'test_event';
+            const data = { test: 'data' };
+            const options = { name: 'orders' };
+            await client.sendMessage(pattern, data, options);
+            await client.sendMessage(pattern, data, options);
+            const calls = mockProducer.send.mock.calls;
+            const firstId = calls[0][0].id;
+            const secondId = calls[1][0].id;
+            expect(firstId).not.toBe(secondId);
+            expect(typeof firstId).toBe('string');
+            expect(typeof secondId).toBe('string');
+        });
+    });
+    describe('Producer Management', () => {
+        it('should create producers with correct configuration', async () => {
+            await client.connect();
+            expect(MockedProducer).toHaveBeenCalledTimes(2);
+            expect(MockedProducer).toHaveBeenNthCalledWith(1, producerOptions[0], options.producer.config);
+            expect(MockedProducer).toHaveBeenNthCalledWith(2, producerOptions[1], options.producer.config);
+        });
+        it('should handle producer type configuration correctly', async () => {
+            await client.connect();
+            expect(client.producers.has('orders')).toBe(true);
+            expect(client.producers.has('notifications')).toBe(true);
+            const ordersProducer = client.producers.get('orders');
+            const notificationsProducer = client.producers.get('notifications');
+            expect(ordersProducer).toBeDefined();
+            expect(notificationsProducer).toBeDefined();
+        });
     });
 });
 //# sourceMappingURL=pubsub.client.spec.js.map

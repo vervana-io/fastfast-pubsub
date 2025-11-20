@@ -12,3 +12,6 @@ export * from './pubsub.server'
 export * from './pubsub.interface'
 export * from './pubsub.client'
 export * from './pubsub.decorator'
+
+// Explicitly export PubSubModule and PUBSUB_OPTIONS to ensure TypeScript compatibility
+export { PubSubModule, PUBSUB_OPTIONS } from './pubsub.module'

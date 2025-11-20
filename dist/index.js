@@ -14,10 +14,14 @@ var __exportStar = (this && this.__exportStar) || function(m, exports) {
     for (var p in m) if (p !== "default" && !Object.prototype.hasOwnProperty.call(exports, p)) __createBinding(exports, m, p);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.PUBSUB_OPTIONS = exports.PubSubModule = void 0;
 __exportStar(require("./pubsub.context"), exports);
 __exportStar(require("./pubsub.events"), exports);
 __exportStar(require("./pubsub.server"), exports);
 __exportStar(require("./pubsub.interface"), exports);
 __exportStar(require("./pubsub.client"), exports);
 __exportStar(require("./pubsub.decorator"), exports);
+var pubsub_module_1 = require("./pubsub.module");
+Object.defineProperty(exports, "PubSubModule", { enumerable: true, get: function () { return pubsub_module_1.PubSubModule; } });
+Object.defineProperty(exports, "PUBSUB_OPTIONS", { enumerable: true, get: function () { return pubsub_module_1.PUBSUB_OPTIONS; } });
 //# sourceMappingURL=index.js.map
